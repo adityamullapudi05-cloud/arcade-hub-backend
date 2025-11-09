@@ -4,31 +4,51 @@ const cors = require('cors');
 const bcrypt = require('bcrypt'); // For hashing passwords
 const jwt = require('jsonwebtoken'); // For user login tokens
 const { Pool } = require('pg');  // For connecting to PostgreSQL
+const url = require('url'); // NEW: For parsing the DATABASE_URL
 
 const app = express();
-const port = 3000;
+// Render automatically provides the PORT environment variable
+const port = process.env.PORT || 3000;
 
 // --- CONFIGURATION ---
-// In a real app, this "secret" would be in a hidden file (.env)
 // This is the "secret key" for creating and verifying login tokens
-const JWT_SECRET = 'your-super-secret-key-that-nobody-knows';
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-that-nobody-knows';
 
 // Middleware
 app.use(cors()); // Allows your frontend to talk to this backend
 app.use(express.json()); // Allows the server to understand JSON data
 
-// --- STEP 1: DATABASE CONNECTION ---
-const pool = new Pool({
-    user: 'postgres',
-    host: 'localhost',
-    database: 'arcade_hub_db',
-    password: '1qaz2wsx', // <-- !! IMPORTANT: REPLACE THIS !!
-    port: 5432,
-});
+// --- STEP 1: DATABASE CONNECTION (UPDATED FOR RENDER) ---
+// Render provides the DATABASE_URL environment variable
+const dbUrl = process.env.DATABASE_URL;
+
+if (!dbUrl) {
+    console.error("FATAL ERROR: DATABASE_URL environment variable not set.");
+    process.exit(1);
+}
+
+// Parse the URL provided by Render
+const params = url.parse(dbUrl);
+const auth = params.auth ? params.auth.split(':') : [];
+
+const config = {
+    user: auth[0],
+    password: auth[1],
+    host: params.hostname,
+    port: params.port,
+    database: params.pathname ? params.pathname.split('/')[1] : '',
+    ssl: { 
+        // CRITICAL FIX: Forces SSL for connection between Render services
+        rejectUnauthorized: false 
+    }
+};
+
+const pool = new Pool(config);
 
 // Check connection
 pool.connect((err, client, done) => {
     if (err) {
+        // This will now successfully log the full error stack if it fails
         console.error('Error connecting to PostgreSQL database:', err.stack);
         return;
     }
@@ -97,7 +117,6 @@ app.post('/api/login', async (req, res) => {
         }
 
         // --- Check the password ---
-        // Compare the password from the request with the "hash" stored in the database
         const isMatch = await bcrypt.compare(password, user.password_hash);
 
         if (!isMatch) {
@@ -105,8 +124,6 @@ app.post('/api/login', async (req, res) => {
         }
 
         // --- Create Login Token (JWT) ---
-        // The user is valid! Create a token that "proves" they are logged in.
-        // This token contains their user_id and username.
         const token = jwt.sign(
             { userId: user.user_id, username: user.username },
             JWT_SECRET,
@@ -162,31 +179,21 @@ app.get('/api/scores/:game', async (req, res) => {
 
 
 // --- STEP 3: SECURITY MIDDLEWARE ---
-
-/**
- * This function checks for a valid token before allowing
- * a user to access a "protected" route.
- */
 function authenticateToken(req, res, next) {
-    // Get the token from the "Authorization" header
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format is "Bearer TOKEN"
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-        return res.status(401).json({ success: false, message: 'No token provided.' }); // 401 = Unauthorized
+        return res.status(401).json({ success: false, message: 'No token provided.' });
     }
 
-    // Check if the token is valid
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
-            return res.status(403).json({ success: false, message: 'Invalid token.' }); // 403 = Forbidden
+            return res.status(403).json({ success: false, message: 'Invalid token.' });
         }
         
-        // The token is valid!
-        // We attach the user's data (e.g., user.userId) to the request object
-        // so the *next* function (the route) can use it.
         req.user = user;
-        next(); // Move on to the route handler (e.g., app.post('/api/save-score'))
+        next();
     });
 }
 
