@@ -1,0 +1,20 @@
+Dependency folders: NEVER commit these!
+
+node_modules/
+
+Local build outputs
+
+/dist
+/build
+
+Environment and Credentials: CRITICAL SECURITY FILES
+
+This file contains your database password and is kept private.
+
+.env
+
+Logs and temporary files
+
+npm-debug.log*
+yarn-error.log
+.DS_Store
